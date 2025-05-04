@@ -2,11 +2,11 @@
   "name": "authgear-firebase-server",
   "version": "1.0.0",
   "description": "A small Express server to exchange Authgear token for Firebase custom token",
-  "main": "server/index.js",
+  "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "nodemon server/index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "keywords": [
     "firebase",
