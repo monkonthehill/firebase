@@ -1,172 +1,57 @@
-require('dotenv').config();
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const admin = require('firebase-admin');
-const morgan = require('morgan');
+// server/index.js
+import express from "express";
+import cors from "cors";
+import bodyParser from "body-parser";
+import admin from "firebase-admin";
+import fetch from "node-fetch";
+import dotenv from "dotenv";
 
-// Validate environment variables
-const requiredEnvVars = [
-  'FIREBASE_SERVICE_ACCOUNT_BASE64',
-  'AUTHGEAR_ENDPOINT',
-  'AUTHGEAR_CLIENT_ID',
-  'PORT'
-];
-
-for (const envVar of requiredEnvVars) {
-  if (!process.env[envVar]) {
-    console.error(`Missing required environment variable: ${envVar}`);
-    process.exit(1);
-  }
-}
-
-// Initialize Firebase
-let firebaseApp;
-try {
-  const serviceAccount = JSON.parse(
-    Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf-8')
-  );
-
-  firebaseApp = admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-} catch (error) {
-  console.error('Firebase initialization failed:', error);
-  process.exit(1);
-}
+dotenv.config();
 
 const app = express();
+app.use(cors());
+app.use(bodyParser.json());
 
-// Middleware
-app.use(helmet());
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
-  methods: ['POST', 'GET'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// Load service account key from environment variable
+const serviceAccount = JSON.parse(
+  Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, "base64").toString(
+    "utf8"
+  )
+);
 
-app.use(express.json({ limit: '10kb' }));
-app.use(morgan('combined'));
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
-});
-app.use(limiter);
-
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({
-    status: 'healthy',
-    service: 'authgear-firebase-token-exchange',
-    timestamp: new Date().toISOString()
-  });
+// Initialize Firebase Admin SDK
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
 });
 
-// Token exchange endpoint
-app.post('/authgear-to-firebase', async (req, res) => {
+app.post("/exchange-token", async (req, res) => {
+  const { authgearToken } = req.body;
+  if (!authgearToken) {
+    return res.status(400).json({ error: "Missing authgearToken" });
+  }
+
   try {
-    const { authgear_token } = req.body;
-    
-    if (!authgear_token) {
-      return res.status(400).json({ 
-        error: 'Missing authgear_token',
-        code: 'MISSING_TOKEN'
-      });
+    // Decode the Authgear token (JWT)
+    const payload = JSON.parse(Buffer.from(authgearToken.split(".")[1], "base64").toString("utf8"));
+
+    // Extract the user ID (subject) or custom identifier from the token
+    const uid = payload.sub; // You can also extract email, name, etc., if needed
+
+    if (!uid) {
+      return res.status(400).json({ error: "UID not found in token" });
     }
 
-    // Verify token with Authgear
-    const introspectResponse = await axios.post(
-      `${process.env.AUTHGEAR_ENDPOINT}/oauth2/token/introspect`,
-      {
-        client_id: process.env.AUTHGEAR_CLIENT_ID,
-        token: authgear_token
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 5000
-      }
-    );
+    // Create a custom Firebase token with the identifier
+    const firebaseToken = await admin.auth().createCustomToken(uid);
 
-    if (!introspectResponse.data?.active) {
-      return res.status(401).json({ 
-        error: 'Invalid or expired token',
-        code: 'INVALID_TOKEN'
-      });
-    }
-
-    // Get user info
-    const userInfoResponse = await axios.get(
-      `${process.env.AUTHGEAR_ENDPOINT}/oauth2/userinfo`,
-      {
-        headers: { Authorization: `Bearer ${authgear_token}` },
-        timeout: 5000
-      }
-    );
-
-    const { sub, email, name } = userInfoResponse.data;
-
-    // Create Firebase custom token
-    const firebaseUid = `authgear:${sub}`;
-    const firebaseToken = await admin.auth().createCustomToken(firebaseUid);
-
-    res.json({
-      success: true,
-      firebaseToken,
-      user: {
-        uid: firebaseUid,
-        email,
-        name
-      }
-    });
-
+    return res.status(200).json({ firebaseToken });
   } catch (error) {
-    console.error('Token exchange error:', error);
-    
-    if (error.response) {
-      // Authgear API error
-      console.error('Authgear API error:', {
-        status: error.response.status,
-        data: error.response.data
-      });
-      
-      return res.status(502).json({
-        error: 'Authgear service error',
-        code: 'AUTHGEAR_ERROR',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    } else if (error.request) {
-      // No response received
-      return res.status(504).json({
-        error: 'Authgear service timeout',
-        code: 'AUTHGEAR_TIMEOUT'
-      });
-    } else {
-      // Other errors
-      return res.status(500).json({
-        error: 'Internal server error',
-        code: 'INTERNAL_ERROR'
-      });
-    }
+    console.error("Token exchange error:", error);
+    return res.status(500).json({ error: "Token exchange failed" });
   }
 });
 
-// Start server
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Authgear endpoint: ${process.env.AUTHGEAR_ENDPOINT}`);
-});
-
-// Error handling
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  process.exit(1);
+  console.log(`Authgear ↔ Firebase backend is running on port ${PORT}`);
 });
