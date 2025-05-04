@@ -1,37 +1,32 @@
-const admin = require('firebase-admin');
+const Authgear = require('@authgear/node');
 
-let firebaseAdminInitialized = false;
+let authgearClient;
 
-const initializeFirebaseAdmin = () => {
-  if (firebaseAdminInitialized) {
-    return admin;
+const initializeAuthgear = () => {
+  if (authgearClient) {
+    return authgearClient;
   }
 
   try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      }),
-      databaseURL: process.env.FIREBASE_DATABASE_URL
+    authgearClient = new Authgear.default({
+      endpoint: process.env.AUTHGEAR_ENDPOINT,
+      clientID: process.env.AUTHGEAR_CLIENT_ID,
     });
 
-    firebaseAdminInitialized = true;
-    console.log('Firebase Admin initialized successfully');
-    return admin;
+    console.log('Authgear client initialized successfully');
+    return authgearClient;
   } catch (error) {
-    console.error('Failed to initialize Firebase Admin:', error);
+    console.error('Failed to initialize Authgear client:', error);
     throw error;
   }
 };
 
 module.exports = {
-  initializeFirebaseAdmin,
-  getAdmin: () => {
-    if (!firebaseAdminInitialized) {
-      throw new Error('Firebase Admin not initialized');
+  initializeAuthgear,
+  getAuthgearClient: () => {
+    if (!authgearClient) {
+      throw new Error('Authgear client not initialized');
     }
-    return admin;
+    return authgearClient;
   }
 };
