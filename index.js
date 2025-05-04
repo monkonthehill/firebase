@@ -1,75 +1,61 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const { initializeFirebaseAdmin } = require('./firebase-admin');
-const { initializeAuthgear } = require('./authgear-setup');
+require("dotenv").config();
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const admin = require("firebase-admin");
 
-const app = express();
-const PORT = process.env.PORT || 3001;
+// Decode Firebase service account from base64 env var
+const serviceAccount = JSON.parse(
+  Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, "base64").toString("utf-8")
+);
 
-// Initialize services
-initializeFirebaseAdmin();
-const authgearClient = initializeAuthgear();
-
-// Middleware
-app.use(helmet());
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*'
-}));
-app.use(morgan('dev'));
-app.use(express.json());
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
 });
 
-// Token exchange endpoint
-app.post('/exchange-token', async (req, res) => {
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
+
+const AUTHGEAR_ENDPOINT = process.env.AUTHGEAR_ENDPOINT;
+
+// POST /authgear-to-firebase - receives Authgear access token, returns Firebase custom token
+app.post("/authgear-to-firebase", async (req, res) => {
   try {
-    const { authgearToken } = req.body;
-    
-    if (!authgearToken) {
-      return res.status(400).json({ error: 'Missing authgearToken' });
+    const { authgear_token } = req.body;
+    if (!authgear_token) {
+      return res.status(400).json({ error: "Missing authgear_token" });
     }
 
-    // Verify Authgear token
-    const authgearUser = await authgearClient.verifyIDToken(authgearToken);
-    
-    // Create Firebase custom token using the Authgear user ID
-    const firebaseToken = await admin.auth().createCustomToken(authgearUser.sub, {
-      // You can add custom claims here if needed
-      'https://authgear.com/claims/user/is_verified': authgearUser.is_verified,
-      'https://authgear.com/claims/user/email': authgearUser.email
+    // Step 1: Get user info from Authgear
+    const userInfoResponse = await axios.get(`${AUTHGEAR_ENDPOINT}/oauth2/userinfo`, {
+      headers: {
+        Authorization: `Bearer ${authgear_token}`,
+      },
     });
-    
-    res.json({ 
-      firebaseToken,
-      authgearUser: {
-        id: authgearUser.sub,
-        email: authgearUser.email,
-        is_verified: authgearUser.is_verified
-      }
-    });
+
+    const userInfo = userInfoResponse.data;
+
+    // Step 2: Use Authgear user ID to create Firebase UID
+    const firebaseUid = `authgear:${userInfo.sub}`;
+
+    // Step 3: Create Firebase custom token
+    const customToken = await admin.auth().createCustomToken(firebaseUid);
+
+    return res.status(200).json({ firebaseToken: customToken });
   } catch (error) {
-    console.error('Token exchange error:', error);
-    
-    if (error.name === 'AuthgearError' && error.reason === 'InvalidToken') {
-      return res.status(401).json({ error: 'Invalid Authgear token' });
-    }
-    
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("Error in /authgear-to-firebase:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something broke!' });
+// Root route (optional health check)
+app.get("/", (req, res) => {
+  res.send("Authgear ↔ Firebase backend is running.");
 });
 
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`Token exchange service running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
