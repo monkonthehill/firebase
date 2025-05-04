@@ -40,13 +40,54 @@ app.post("/authgear-to-firebase", async (req, res) => {
     // Step 2: Use Authgear user ID to create Firebase UID
     const firebaseUid = `authgear:${userInfo.sub}`;
 
-    // Step 3: Create Firebase custom token
+    // Step 3: Get additional user details from Authgear
+    const userDetailsResponse = await axios.get(`${AUTHGEAR_ENDPOINT}/users/${userInfo.sub}`, {
+      headers: {
+        Authorization: `Bearer ${authgear_token}`,
+      },
+    });
+
+    const userDetails = userDetailsResponse.data;
+    const identifier = userDetails.identities?.find(id => id.type === 'login_id')?.claims?.email || 
+                      userDetails.identities?.find(id => id.type === 'login_id')?.claims?.phone_number;
+
+    // Step 4: Create or update Firebase user with identifier
+    try {
+      await admin.auth().updateUser(firebaseUid, {
+        email: userDetails.email || identifier,
+        emailVerified: true,
+        displayName: userDetails.name || '',
+      });
+    } catch (error) {
+      if (error.code === 'auth/user-not-found') {
+        // Create new user if doesn't exist
+        await admin.auth().createUser({
+          uid: firebaseUid,
+          email: userDetails.email || identifier,
+          emailVerified: true,
+          displayName: userDetails.name || '',
+        });
+      } else {
+        throw error;
+      }
+    }
+
+    // Step 5: Create Firebase custom token
     const customToken = await admin.auth().createCustomToken(firebaseUid);
 
-    return res.status(200).json({ firebaseToken: customToken });
+    return res.status(200).json({ 
+      firebaseToken: customToken,
+      identifier: identifier,
+      email: userDetails.email,
+      name: userDetails.name 
+    });
+
   } catch (error) {
     console.error("Error in /authgear-to-firebase:", error.message);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ 
+      error: "Internal server error",
+      details: error.message 
+    });
   }
 });
 
