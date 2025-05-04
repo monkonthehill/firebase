@@ -5,7 +5,7 @@ const cors = require("cors");
 const bodyParser = require("body-parser");
 const admin = require("firebase-admin");
 
-// Decode Firebase service account from base64 env var
+// Initialize Firebase Admin
 const serviceAccount = JSON.parse(
   Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, "base64").toString("utf-8")
 );
@@ -19,84 +19,111 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const AUTHGEAR_ENDPOINT = process.env.AUTHGEAR_ENDPOINT;
+const AUTHGEAR_CLIENT_ID = process.env.AUTHGEAR_CLIENT_ID;
 
-// POST /authgear-to-firebase - receives Authgear access token, returns Firebase custom token
+// Enhanced error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).json({ 
+    error: 'Internal server error',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
+// POST /authgear-to-firebase
 app.post("/authgear-to-firebase", async (req, res) => {
   try {
     const { authgear_token } = req.body;
+    
     if (!authgear_token) {
       return res.status(400).json({ error: "Missing authgear_token" });
     }
 
-    // Step 1: Get user info from Authgear
-    const userInfoResponse = await axios.get(`${AUTHGEAR_ENDPOINT}/oauth2/userinfo`, {
-      headers: {
-        Authorization: `Bearer ${authgear_token}`,
+    // Verify token with Authgear
+    const tokenResponse = await axios.post(
+      `${AUTHGEAR_ENDPOINT}/oauth2/token/introspect`,
+      {
+        client_id: AUTHGEAR_CLIENT_ID,
+        token: authgear_token
       },
-    });
+      {
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+
+    if (!tokenResponse.data.active) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+
+    // Get user info
+    const [userInfoResponse, userDetailsResponse] = await Promise.all([
+      axios.get(`${AUTHGEAR_ENDPOINT}/oauth2/userinfo`, {
+        headers: { Authorization: `Bearer ${authgear_token}` }
+      }),
+      axios.get(`${AUTHGEAR_ENDPOINT}/users/${tokenResponse.data.sub}`, {
+        headers: { Authorization: `Bearer ${authgear_token}` }
+      })
+    ]);
 
     const userInfo = userInfoResponse.data;
+    const userDetails = userDetailsResponse.data;
 
-    // Step 2: Use Authgear user ID to create Firebase UID
+    // Get the primary identifier (email or phone)
+    const primaryIdentity = userDetails.identities?.find(id => id.type === 'login_id');
+    const identifier = primaryIdentity?.claims?.email || primaryIdentity?.claims?.phone_number;
+
+    // Create Firebase UID
     const firebaseUid = `authgear:${userInfo.sub}`;
 
-    // Step 3: Get additional user details from Authgear
-    const userDetailsResponse = await axios.get(`${AUTHGEAR_ENDPOINT}/users/${userInfo.sub}`, {
-      headers: {
-        Authorization: `Bearer ${authgear_token}`,
-      },
-    });
-
-    const userDetails = userDetailsResponse.data;
-    const identifier = userDetails.identities?.find(id => id.type === 'login_id')?.claims?.email || 
-                      userDetails.identities?.find(id => id.type === 'login_id')?.claims?.phone_number;
-
-    // Step 4: Create or update Firebase user with identifier
+    // Create or update Firebase user
     try {
       await admin.auth().updateUser(firebaseUid, {
-        email: userDetails.email || identifier,
+        email: userInfo.email || identifier,
         emailVerified: true,
-        displayName: userDetails.name || '',
+        displayName: userInfo.name || '',
       });
     } catch (error) {
       if (error.code === 'auth/user-not-found') {
-        // Create new user if doesn't exist
         await admin.auth().createUser({
           uid: firebaseUid,
-          email: userDetails.email || identifier,
+          email: userInfo.email || identifier,
           emailVerified: true,
-          displayName: userDetails.name || '',
+          displayName: userInfo.name || '',
         });
       } else {
         throw error;
       }
     }
 
-    // Step 5: Create Firebase custom token
+    // Create custom token
     const customToken = await admin.auth().createCustomToken(firebaseUid);
 
-    return res.status(200).json({ 
+    res.status(200).json({
       firebaseToken: customToken,
       identifier: identifier,
-      email: userDetails.email,
-      name: userDetails.name 
+      email: userInfo.email,
+      name: userInfo.name
     });
 
   } catch (error) {
-    console.error("Error in /authgear-to-firebase:", error.message);
-    return res.status(500).json({ 
-      error: "Internal server error",
-      details: error.message 
+    console.error("Authgear-Firebase token exchange failed:", error);
+    
+    // Provide more detailed error information
+    const statusCode = error.response?.status || 500;
+    const errorMessage = error.response?.data?.error || error.message || 'Token exchange failed';
+    
+    res.status(statusCode).json({ 
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
-// Root route (optional health check)
 app.get("/", (req, res) => {
-  res.send("Authgear ↔ Firebase backend is running.");
+  res.send("Authgear ↔ Firebase token exchange service is running");
 });
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
