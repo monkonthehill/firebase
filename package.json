@@ -1,12 +1,10 @@
 {
   "name": "authgear-firebase-token-exchange",
   "version": "1.0.0",
-  "description": "Token exchange service between Authgear and Firebase",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "jest"
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "axios": "^1.6.2",
