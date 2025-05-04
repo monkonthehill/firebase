@@ -1,23 +1,24 @@
 {
   "name": "authgear-firebase-backend",
   "version": "1.0.0",
+  "description": "Backend server for Authgear + Firebase authentication flow",
   "main": "index.js",
-  "engines": {
-    "node": "18.x"
-  },
   "scripts": {
     "start": "node index.js",
-    "build": "npm install",
     "dev": "nodemon index.js",
-    "postinstall": "npm audit fix --force"
+    "test": "echo \"Error: no tests specified\" && exit 1"
   },
   "dependencies": {
-    "dotenv": "^16.0.3",
-    "express": "^4.18.2",
+    "axios": "^1.6.7",
     "cors": "^2.8.5",
-      "morgan": "^1.10.0",
-    "helmet": "^7.1.0",
-    "@authgear/core": "git+https://github.com/authgear/authgear-sdk-js.git#v2.15.0",
-    "firebase-admin": "^11.5.0"
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "firebase-admin": "^11.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.x"
   }
 }
