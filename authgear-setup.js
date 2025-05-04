@@ -1,4 +1,4 @@
-const Authgear = require('@authgear/node');
+const { authgear } = require('@authgear/core');
 
 let authgearClient;
 
