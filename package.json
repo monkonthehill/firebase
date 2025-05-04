@@ -13,7 +13,7 @@
   "dependencies": {
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
- "@authgear/core": "github:authgear/authgear-sdk-js#packages/authgear-core",
+    "@authgear/core": "git+https://github.com/authgear/authgear-sdk-js.git#v2.15.0",
     "firebase-admin": "^11.5.0"
   }
 }
